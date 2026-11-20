@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>ScrcpyOverWebRTC Viewer</title>
+<style>
+  body { margin: 0; background: #111; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+  canvas { border: 2px solid #333; max-width: 100vw; height: auto; }
+  #status { position: fixed; top: 10px; left: 10px; color: #0f0; font-family: monospace; }
+  #controls { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); }
+  button { padding: 10px 20px; margin: 5px; font-size: 16px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="status">Connecting to signaling server...</div>
+<canvas id="screen"></canvas>
+<div id="controls">
+  <button onclick="connect()">Kết nối</button>
+  <button onclick="disconnect()">Ngắt</button>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/socket.io@4.7.5/socket.io.min.js"></script>
+<script>
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d');
+const status = document.getElementById('status');
+
+const socket = io('https://10.42.0.214:5000', { 
+  transports: ['websocket'],
+  rejectUnauthorized: false
+});
+let pc = null;
+
+socket.on('connect', () => {
+  status.textContent = 'Socket connected, joining room...';
+  socket.emit('join-room', { room: 'my-device' });
+});
+
+socket.on('offer', async (d) => {
+  status.textContent = 'Offer received...';
+  pc = new RTCPeerConnection({
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+  });
+  
+  pc.ontrack = (e) => {
+    const video = e.streams[0].getVideoTracks()[0];
+    if (video) {
+      status.textContent = 'Video track received';
+    }
+  };
+  
+  pc.onconnectionstatechange = () => {
+    status.textContent = 'Connection: ' + pc.connectionState;
+  };
+  
+  pc.onicecandidate = (e) => {
+    if (e.candidate) {
+      socket.emit('ice-candidate', { room: 'my-device', candidate: e.candidate.candidate, sdpMid: e.candidate.sdpMid, sdpMLineIndex: e.candidate.sdpMLineIndex });
+    }
+  };
+  
+  try {
+    await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: d.sdp }));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    socket.emit('answer', { room: 'my-device', sdp: answer.sdp, type: 'answer' });
+    status.textContent = 'Answer sent';
+  } catch(e) {
+    status.textContent = 'Error: ' + e.message;
+  }
+});
+
+socket.on('ice-candidate', async (d) => {
+  if (pc && d.candidate) {
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate({ candidate: d.candidate, sdpMid: d.sdpMid, sdpMLineIndex: d.sdpMLineIndex }));
+    } catch(e) {}
+  }
+});
+
+function connect() {
+  status.textContent = 'Connecting...';
+  socket.connect();
+}
+
+function disconnect() {
+  if (pc) pc.close();
+  socket.disconnect();
+  status.textContent = 'Disconnected';
+}
+</script>
+</body>
+</html>

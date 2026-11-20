@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h1>Sender</h1>
+<button id="start">Bắt đầu chia sẻ màn hình</button>
+<video id="local" autoplay playsinline muted style="width:320px"></video>
+<pre id="log"></pre>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+const log = (m)=>{ document.getElementById('log').textContent += m+"\n"; console.log(m); };
+const socket = io("http://localhost:3000", { transports: ["websocket"] });
+socket.on("connect", ()=>log("Socket connected"));
+const pc = new RTCPeerConnection({ iceServers:[{urls:"stun:stun.cloudflare.com:3478"}] });
+pc.onicecandidate = e=>{ if(e.candidate){ socket.emit("ice-candidate",{room:"child-01",candidate:e.candidate.candidate,sdpMid:e.candidate.sdpMid,sdpMLineIndex:e.candidate.sdpMLineIndex}); log("Sent local ICE"); } };
+pc.onconnectionstatechange = ()=>log("Connection: "+pc.connectionState);
+socket.on("answer", async d=>{ await pc.setRemoteDescription(new RTCSessionDescription({type:"answer",sdp:d.sdp})); log("Nhận answer"); });
+socket.on("ice-candidate", async d=>{ try{ await pc.addIceCandidate(new RTCIceCandidate({candidate:d.candidate,sdpMid:d.sdpMid,sdpMLineIndex:d.sdpMLineIndex})); }catch(e){} });
+document.getElementById('start').onclick = async ()=>{
+  const stream = await navigator.mediaDevices.getDisplayMedia({video:true,audio:false});
+  document.getElementById('local').srcObject = stream;
+  stream.getTracks().forEach(t=>pc.addTrack(t,stream));
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  socket.emit("join-room",{room:"child-01"});
+  setTimeout(()=>{ socket.emit("offer",{room:"child-01",sdp:pc.localDescription.sdp,type:"offer"}); log("Sent offer"); },300);
+};
+</script>
+</body>
+</html>
